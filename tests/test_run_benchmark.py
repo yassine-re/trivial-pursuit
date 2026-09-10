@@ -16,20 +16,22 @@ from src.enrich.run_benchmark import (
 from src.transform.build_silver import SILVER_SCHEMA
 
 
-class FakeOllamaClient:
+class FakeLMStudioClient:
     def __init__(self):
         self.generate_calls = 0
 
     def installed_models(self):
-        return ["test-model:latest"]
+        return ["test-model"]
 
     def generate(self, model, prompt, temperature, seed):
         self.generate_calls += 1
         return {
-            "response": "A",
-            "total_duration": 1_000_000_000,
-            "prompt_eval_count": 20,
-            "eval_count": 1,
+            "choices": [{"message": {"content": "A"}}],
+            "usage": {
+                "prompt_tokens": 20,
+                "completion_tokens": 1,
+                "total_tokens": 21,
+            },
         }, 1.1
 
 
@@ -78,17 +80,20 @@ class BenchmarkTests(unittest.TestCase):
             0.0,
             42,
             {
-                "response": "B",
-                "total_duration": 2_000_000_000,
-                "load_duration": 500_000_000,
-                "prompt_eval_count": 30,
-                "eval_count": 1,
+                "choices": [{"message": {"content": "B"}}],
+                "usage": {
+                    "prompt_tokens": 30,
+                    "completion_tokens": 1,
+                    "total_tokens": 31,
+                },
             },
             2.1,
         )
         self.assertTrue(result["ai_correct"])
         self.assertEqual(result["status"], "success")
-        self.assertEqual(result["ollama_total_duration_seconds"], 2.0)
+        self.assertEqual(result["prompt_tokens"], 30)
+        self.assertEqual(result["completion_tokens"], 1)
+        self.assertEqual(result["total_tokens"], 31)
 
         with tempfile.TemporaryDirectory(prefix="trivia-results-") as temporary:
             output = Path(temporary) / "results.parquet"
@@ -112,7 +117,7 @@ class BenchmarkTests(unittest.TestCase):
                 output=output_path,
                 offset=0,
                 limit=None,
-                ollama_url="http://unused",
+                lm_studio_url="http://unused/v1",
                 timeout=10.0,
                 max_attempts=1,
                 model="test-model",
@@ -122,7 +127,7 @@ class BenchmarkTests(unittest.TestCase):
                 force=False,
                 checkpoint_every=10,
             )
-            client = FakeOllamaClient()
+            client = FakeLMStudioClient()
             self.assertEqual(run(args, client), 0)
             self.assertEqual(client.generate_calls, 1)
             rows = pq.read_table(output_path).to_pylist()

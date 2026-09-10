@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Interroge Ollama et enrichit la couche Silver avec ses réponses brutes."""
+"""Interroge LM Studio et enrichit la couche Silver avec ses réponses brutes."""
 
 from __future__ import annotations
 
@@ -26,7 +26,9 @@ from src.enrich.prompts import PROMPT_TEMPLATES, render_prompt
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_INPUT = PROJECT_ROOT / "data" / "silver" / "questions_clean.parquet"
 DEFAULT_OUTPUT = PROJECT_ROOT / "data" / "silver" / "benchmark_results.parquet"
-DEFAULT_OLLAMA_URL = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+DEFAULT_LM_STUDIO_URL = os.environ.get("LM_STUDIO_URL", "http://localhost:1234/v1")
+DEFAULT_MODEL = os.environ.get("LM_STUDIO_MODEL", "google/gemma-3-4b")
+LM_STUDIO_API_TOKEN = os.environ.get("LM_STUDIO_API_TOKEN")
 
 QUESTION_COLUMNS = (
     "source_row_number",
@@ -66,19 +68,18 @@ RESULT_SCHEMA = pa.schema(
         pa.field("status", pa.string(), nullable=False),
         pa.field("error_message", pa.string()),
         pa.field("created_at", pa.timestamp("us", tz="UTC"), nullable=False),
-        pa.field("ollama_total_duration_seconds", pa.float64()),
-        pa.field("ollama_load_duration_seconds", pa.float64()),
-        pa.field("prompt_eval_count", pa.int32()),
-        pa.field("eval_count", pa.int32()),
+        pa.field("prompt_tokens", pa.int32()),
+        pa.field("completion_tokens", pa.int32()),
+        pa.field("total_tokens", pa.int32()),
     ]
 )
 
 
-class OllamaError(RuntimeError):
-    """Erreur explicite de communication ou de réponse Ollama."""
+class LMStudioError(RuntimeError):
+    """Erreur de communication avec LM Studio."""
 
 
-class OllamaClient:
+class LMStudioClient:
     def __init__(
         self,
         base_url: str,
@@ -89,33 +90,52 @@ class OllamaClient:
         normalized_url = base_url.strip()
         if "://" not in normalized_url:
             normalized_url = f"http://{normalized_url}"
-        self.base_url = normalized_url.rstrip("/")
+        normalized_url = normalized_url.rstrip("/")
+        self.base_url = (
+            normalized_url
+            if normalized_url.endswith("/v1")
+            else f"{normalized_url}/v1"
+        )
         self.timeout = timeout
         self.max_attempts = max_attempts
         self.session = session or requests.Session()
 
+        if LM_STUDIO_API_TOKEN:
+            self.session.headers.update(
+                {"Authorization": f"Bearer {LM_STUDIO_API_TOKEN}"}
+            )
+
     def installed_models(self) -> list[str]:
+        """Retourne les modèles disponibles dans LM Studio."""
+
         try:
             response = self.session.get(
-                f"{self.base_url}/api/tags", timeout=min(self.timeout, 10)
+                f"{self.base_url}/models",
+                timeout=min(self.timeout, 10),
             )
+
             response.raise_for_status()
             data = response.json()
+
         except (requests.RequestException, ValueError) as error:
-            raise OllamaError(
-                f"Ollama est inaccessible sur {self.base_url}. "
-                "Vérifiez que le service est démarré."
+            raise LMStudioError(
+                f"LM Studio est inaccessible sur {self.base_url}. "
+                "Vérifiez que le serveur local est démarré."
             ) from error
-        if not isinstance(data, dict) or not isinstance(data.get("models"), list):
-            raise OllamaError("Réponse invalide de l'API Ollama /api/tags.")
-        names = []
-        for model in data["models"]:
-            if not isinstance(model, dict):
-                raise OllamaError("Modèle invalide dans la réponse Ollama.")
-            name = model.get("name") or model.get("model")
-            if isinstance(name, str):
-                names.append(name)
-        return sorted(names)
+
+        if not isinstance(data, dict):
+            raise LMStudioError("Réponse invalide de LM Studio sur /v1/models.")
+
+        models = data.get("data")
+        if not isinstance(models, list):
+            raise LMStudioError("Réponse invalide de LM Studio sur /v1/models.")
+
+        return sorted(
+            model["id"]
+            for model in models
+            if isinstance(model, dict)
+            and isinstance(model.get("id"), str)
+        )
 
     def generate(
         self,
@@ -126,30 +146,71 @@ class OllamaClient:
     ) -> tuple[dict[str, Any], float]:
         payload = {
             "model": model,
-            "prompt": prompt,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": prompt,
+                }
+            ],
+            "temperature": temperature,
+            "seed": seed,
             "stream": False,
-            "options": {"temperature": temperature, "seed": seed},
+            "max_tokens": 8,
         }
+
         started = perf_counter()
         last_error: Exception | None = None
+
         for attempt in range(1, self.max_attempts + 1):
             try:
                 response = self.session.post(
-                    f"{self.base_url}/api/generate",
+                    f"{self.base_url}/chat/completions",
                     json=payload,
                     timeout=self.timeout,
                 )
+
                 response.raise_for_status()
                 data = response.json()
-                if not isinstance(data.get("response"), str):
-                    raise OllamaError("Réponse Ollama sans champ texte 'response'.")
+
+                if not isinstance(data, dict):
+                    raise LMStudioError("Réponse JSON invalide de LM Studio.")
+
+                choices = data.get("choices")
+
+                if not isinstance(choices, list) or not choices:
+                    raise LMStudioError(
+                        "LM Studio n'a retourné aucune réponse."
+                    )
+
+                first_choice = choices[0]
+                if not isinstance(first_choice, dict):
+                    raise LMStudioError("Réponse LM Studio invalide.")
+
+                message = first_choice.get("message", {})
+                if not isinstance(message, dict):
+                    raise LMStudioError("Réponse LM Studio invalide.")
+                content = message.get("content")
+
+                if not isinstance(content, str):
+                    raise LMStudioError(
+                        "Réponse LM Studio sans contenu texte."
+                    )
+
                 return data, perf_counter() - started
-            except (requests.RequestException, ValueError, OllamaError) as error:
+
+            except (
+                requests.RequestException,
+                ValueError,
+                LMStudioError,
+            ) as error:
                 last_error = error
+
                 if attempt < self.max_attempts:
                     sleep(min(2 ** (attempt - 1), 4))
-        raise OllamaError(
-            f"Échec Ollama après {self.max_attempts} tentative(s) : {last_error}"
+
+        raise LMStudioError(
+            f"Échec LM Studio après {self.max_attempts} tentative(s) : "
+            f"{last_error}"
         ) from last_error
 
 
@@ -185,6 +246,7 @@ def benchmark_id(
 ) -> str:
     identity = {
         "question_id": question_id,
+        "provider": "lm_studio",
         "model": model,
         "prompt_id": prompt_id,
         "prompt_template": PROMPT_TEMPLATES[prompt_id],
@@ -225,7 +287,8 @@ def write_results(rows: list[dict[str, Any]], output_path: Path) -> None:
     metadata = {
         b"medallion_layer": b"silver",
         b"dataset_kind": b"llm_benchmark_results",
-        b"silver_schema_version": b"1",
+        b"inference_provider": b"lm_studio",
+        b"silver_schema_version": b"2",
     }
     ordered_rows = sorted(
         rows,
@@ -256,10 +319,6 @@ def write_results(rows: list[dict[str, Any]], output_path: Path) -> None:
         temporary_path.unlink(missing_ok=True)
 
 
-def nanoseconds_to_seconds(value: Any) -> float | None:
-    return value / 1_000_000_000 if isinstance(value, int) else None
-
-
 def result_from_response(
     question: dict[str, Any],
     model: str,
@@ -271,7 +330,17 @@ def result_from_response(
     response_time: float,
     error: Exception | None = None,
 ) -> dict[str, Any]:
-    raw_answer = response.get("response") if response else None
+    raw_answer = None
+    usage: dict[str, Any] = {}
+    if response:
+        choices = response.get("choices", [])
+        if isinstance(choices, list) and choices and isinstance(choices[0], dict):
+            message = choices[0].get("message", {})
+            if isinstance(message, dict):
+                raw_answer = message.get("content")
+        response_usage = response.get("usage", {})
+        if isinstance(response_usage, dict):
+            usage = response_usage
     parsed_answer = (
         parse_ai_answer(raw_answer, question["answer_choices"])
         if isinstance(raw_answer, str)
@@ -297,23 +366,17 @@ def result_from_response(
         "status": status,
         "error_message": str(error) if error else None,
         "created_at": datetime.now(timezone.utc),
-        "ollama_total_duration_seconds": nanoseconds_to_seconds(
-            response.get("total_duration") if response else None
-        ),
-        "ollama_load_duration_seconds": nanoseconds_to_seconds(
-            response.get("load_duration") if response else None
-        ),
-        "prompt_eval_count": response.get("prompt_eval_count") if response else None,
-        "eval_count": response.get("eval_count") if response else None,
+        "prompt_tokens": usage.get("prompt_tokens"),
+        "completion_tokens": usage.get("completion_tokens"),
+        "total_tokens": usage.get("total_tokens"),
     }
 
 
 def model_is_installed(model: str, installed: list[str]) -> bool:
-    requested = model if ":" in model else f"{model}:latest"
-    return model in installed or requested in installed
+    return model in installed
 
 
-def run(args: argparse.Namespace, client: OllamaClient | None = None) -> int:
+def run(args: argparse.Namespace, client: LMStudioClient | None = None) -> int:
     questions = load_questions(args.input)
     questions = questions[args.offset :]
     if args.limit is not None:
@@ -321,14 +384,16 @@ def run(args: argparse.Namespace, client: OllamaClient | None = None) -> int:
     if not questions:
         raise ValueError("Aucune question sélectionnée.")
 
-    client = client or OllamaClient(
-        args.ollama_url, args.timeout, args.max_attempts
+    client = client or LMStudioClient(
+        args.lm_studio_url, args.timeout, args.max_attempts
     )
     installed = client.installed_models()
     if not model_is_installed(args.model, installed):
         available = ", ".join(installed) or "aucun"
-        raise OllamaError(
-            f"Le modèle {args.model!r} n'est pas installé. Modèles disponibles : "
+        raise LMStudioError(
+            f"Le modèle {args.model!r} n'est pas visible dans LM Studio. "
+            "Activez le chargement JIT ou chargez-le dans l'onglet Developer. "
+            "Modèles disponibles : "
             f"{available}."
         )
 
@@ -377,7 +442,7 @@ def run(args: argparse.Namespace, client: OllamaClient | None = None) -> int:
                     response,
                     response_time,
                 )
-            except OllamaError as error:
+            except LMStudioError as error:
                 result = result_from_response(
                     question,
                     args.model,
@@ -408,13 +473,17 @@ def run(args: argparse.Namespace, client: OllamaClient | None = None) -> int:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--model", required=True, help="Nom du modèle Ollama")
+    parser.add_argument(
+        "--model",
+        default=DEFAULT_MODEL,
+        help=f"Identifiant du modèle LM Studio (défaut : {DEFAULT_MODEL})",
+    )
     parser.add_argument("--input", type=Path, default=DEFAULT_INPUT)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument(
         "--prompt-id", choices=sorted(PROMPT_TEMPLATES), default="letter_only_v1"
     )
-    parser.add_argument("--ollama-url", default=DEFAULT_OLLAMA_URL)
+    parser.add_argument("--lm-studio-url", default=DEFAULT_LM_STUDIO_URL)
     parser.add_argument("--limit", type=int)
     parser.add_argument("--offset", type=int, default=0)
     parser.add_argument("--temperature", type=float, default=0.0)
@@ -442,7 +511,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     try:
         sys.exit(run(parse_args()))
-    except (FileNotFoundError, ValueError, OllamaError) as error:
+    except (FileNotFoundError, ValueError, LMStudioError) as error:
         print(f"Erreur : {error}", file=sys.stderr)
         sys.exit(1)
 

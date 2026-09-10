@@ -11,7 +11,7 @@ data/
 │   └── questions_raw.csv
 └── silver/
     ├── questions_clean.parquet
-    └── benchmark_results.parquet       # créé après un benchmark Ollama
+    └── benchmark_results.parquet       # créé après un benchmark LM Studio
 src/
 ├── extract/extract_opentdb.py
 ├── transform/build_silver.py
@@ -60,18 +60,44 @@ La transformation :
 - inscrit le chemin et l'empreinte SHA-256 du Bronze dans les métadonnées ;
 - écrit atomiquement `data/silver/questions_clean.parquet`.
 
-## Enrichir avec Ollama
+## Enrichir avec LM Studio
 
-Une fois Ollama démarré et un modèle téléchargé, commencer par un petit essai :
+1. Installer [LM Studio](https://lmstudio.ai/) et télécharger un modèle.
+2. Dans l'onglet **Developer**, démarrer le serveur local. Il peut aussi être
+   lancé avec la CLI :
 
 ```bash
-make benchmark MODEL=llama3.2:3b LIMIT=20
+lms server start
 ```
 
-Puis lancer le dataset complet :
+3. Activer le chargement JIT ou charger le modèle manuellement. L'identifiant
+   visible dans LM Studio doit correspondre à celui passé au benchmark.
+
+Le pipeline utilise l'API OpenAI-compatible de LM Studio, disponible par défaut
+sur `http://localhost:1234/v1`. Le modèle par défaut est
+`google/gemma-3-4b`. Vérifier les modèles visibles par le serveur avec :
 
 ```bash
-make benchmark MODEL=llama3.2:3b
+curl http://localhost:1234/v1/models
+```
+
+Commencer par un petit essai :
+
+```bash
+make benchmark LIMIT=20
+```
+
+Pour utiliser un autre modèle, reprendre exactement son identifiant LM Studio :
+
+```bash
+make benchmark MODEL="identifiant-du-modèle" LIMIT=20
+```
+
+Puis lancer le dataset complet avec le modèle par défaut ou un modèle choisi :
+
+```bash
+make benchmark
+make benchmark MODEL="identifiant-du-modèle"
 ```
 
 La commande reprend automatiquement un fichier existant, rejoue les erreurs et
@@ -79,8 +105,12 @@ enregistre un checkpoint toutes les dix questions. Une interruption clavier
 conserve également la progression. Pour rejouer les résultats déjà réussis :
 
 ```bash
-python -m src.enrich.run_benchmark --model llama3.2:3b --force
+python -m src.enrich.run_benchmark --model "identifiant-du-modèle" --force
 ```
+
+Les variables `LM_STUDIO_URL` et `LM_STUDIO_MODEL` permettent de modifier les
+valeurs par défaut. Si l'authentification du serveur local est activée, définir
+également `LM_STUDIO_API_TOKEN`.
 
 Le prompt est versionné par `prompt_id`. La première version exige uniquement la
 lettre du choix ; elle ne transmet jamais la bonne réponse au modèle.
