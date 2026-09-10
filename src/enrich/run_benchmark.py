@@ -215,26 +215,38 @@ class LMStudioClient:
 
 
 def parse_ai_answer(raw_answer: str, choices: list[str]) -> str | None:
-    """Convertit une réponse courte du modèle en lettre, sans matching flou."""
+    """Convertit la réponse du modèle en lettre correspondant au choix."""
 
     valid_labels = string.ascii_uppercase[: len(choices)]
-    cleaned = raw_answer.strip().strip("`*_\"' ")
-    match = re.fullmatch(
-        r"(?:(?:answer|réponse)\s*:\s*)?([A-Z])(?:[.)])?",
-        cleaned,
-        flags=re.IGNORECASE,
-    )
-    if match:
-        label = match.group(1).upper()
-        return label if label in valid_labels else None
 
+    cleaned = raw_answer.strip().strip("`*_\"' ")
+
+    # 1. Vérifier d'abord si le modèle a répondu avec le texte du choix
     normalized = cleaned.casefold()
+
     matches = [
         string.ascii_uppercase[index]
         for index, choice in enumerate(choices)
         if choice.strip().casefold() == normalized
     ]
-    return matches[0] if len(matches) == 1 else None
+
+    if len(matches) == 1:
+        return matches[0]
+
+    # 2. Sinon vérifier s'il a répondu avec une lettre A/B/C/D
+    match = re.fullmatch(
+        r"(?:(?:answer|réponse)\s*:\s*)?([A-Z])(?:[.)])?",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+
+    if match:
+        label = match.group(1).upper()
+
+        if label in valid_labels:
+            return label
+
+    return None
 
 
 def benchmark_id(
