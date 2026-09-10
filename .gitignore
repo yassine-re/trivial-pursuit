@@ -1,0 +1,8 @@
+.DS_Store
+.venv/
+__pycache__/
+*.py[cod]
+
+# Fichiers temporaires de l'extraction OpenTDB
+data/bronze/*.checkpoint.json
+data/bronze/*.tmp
