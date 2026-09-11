@@ -1,0 +1,18 @@
+version: 2
+
+sources:
+
+  - name: silver
+    description: "Couche Silver du benchmark IA"
+
+    tables:
+
+      - name: benchmark_results
+
+        description: >
+          Résultats détaillés du benchmark des modèles IA,
+          une ligne par question, modèle, prompt et configuration.
+
+        config:
+          external_location: >
+            read_parquet('{{ env_var("BI_BENCHMARK_ROOT", ".") }}/data/silver/benchmark_results.parquet')

@@ -1,0 +1,16 @@
+[0m14:32:59.300797 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'invocation', 'label': 'start', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x1088f7c90>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x10b9bf0d0>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x10b9bfad0>]}
+
+
+============================== 14:32:59.303419 | 1d6b6bf3-34e3-4075-ba6c-542e3f17ca99 ==============================
+[0m14:32:59.303419 [info ] [MainThread]: Running with dbt=1.12.4
+[0m14:32:59.303726 [debug] [MainThread]: running dbt with arguments {'debug': 'False', 'invocation_command': 'dbt docs generate', 'indirect_selection': 'eager', 'warn_error': 'None', 'no_print': 'None', 'log_format': 'default', 'version_check': 'True', 'introspect': 'True', 'use_colors': 'True', 'maximum_seed_size_mib': '1', 'static_parser': 'True', 'use_experimental_parser': 'False', 'profiles_dir': '/Users/yassine/.dbt', 'fail_fast': 'False', 'write_json': 'True', 'send_anonymous_usage_stats': 'True', 'target_path': 'None', 'warn_error_options': 'WarnErrorOptionsV2(error=[], warn=[], silence=[])', 'printer_width': '80', 'cache_selected_only': 'False', 'partial_parse': 'True', 'empty': 'None', 'log_cache_events': 'False', 'quiet': 'False', 'log_path': 'logs', 'hints_enabled': 'True'}
+[0m14:32:59.304078 [error] [MainThread]: [[31mERROR[0m]: Encountered an error:
+Runtime Error
+  No dbt_project.yml found at expected path /Users/yassine/Documents/EFREI/M2/BI/bi-ai-benchmark/dbt_project.yml
+  Verify that each entry within packages.yml (and their transitive dependencies) contains a file named dbt_project.yml
+  
+[0m14:32:59.305876 [debug] [MainThread]: Resource report: {"command_name": "generate", "command_success": false, "command_wall_clock_time": 0.058615334, "process_in_blocks": "0", "process_kernel_time": 0.208885, "process_mem_max_rss": "115032064", "process_out_blocks": "0", "process_user_time": 0.77089}
+[0m14:32:59.306145 [debug] [MainThread]: Command `dbt docs generate` failed at 14:32:59.306101 after 0.06 seconds
+[0m14:32:59.306341 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'invocation', 'label': 'end', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x10b994c50>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x10b995790>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x10b89e0d0>]}
+[0m14:32:59.306532 [debug] [MainThread]: Flushing usage events
+[0m14:32:59.779058 [debug] [MainThread]: An error was encountered while trying to flush usage events

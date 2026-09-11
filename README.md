@@ -9,15 +9,20 @@ les questions de culture générale d'Open Trivia Database.
 data/
 ├── bronze/
 │   └── questions_raw.csv
-└── silver/
-    ├── questions_clean.parquet
-    └── benchmark_results.parquet       # créé après un benchmark LM Studio
+├── silver/
+│   ├── questions_clean.parquet
+│   └── benchmark_results.parquet       # créé après un benchmark LM Studio
+└── gold/
+    └── benchmark.duckdb                # construit par dbt
 src/
 ├── extract/extract_opentdb.py
 ├── transform/build_silver.py
-└── enrich/
-    ├── prompts.py
-    └── run_benchmark.py
+├── enrich/
+│   ├── prompts.py
+│   └── run_benchmark.py
+└── dashboard/                          # lecture et graphiques
+dbt/models/marts/fct_benchmark_results.sql
+streamlit_app.py                        # interface Streamlit
 tests/
 ```
 
@@ -25,7 +30,8 @@ tests/
 - **Silver questions** nettoie et type les questions dans un Parquet Zstandard.
 - **Silver benchmark** conserve une ligne par question, modèle, prompt et
   configuration de génération, y compris la réponse brute et le temps mesuré.
-- **Gold** sera construit ensuite avec dbt dans DuckDB.
+- **Gold** est construit avec dbt dans DuckDB sous forme de marts analytiques.
+- **Dashboard** explore les résultats Gold avec Streamlit et Plotly.
 
 ## Installation
 
@@ -124,3 +130,90 @@ make test
 Les tests vérifient le nettoyage, la stabilité des identifiants et des choix, les
 erreurs de qualité, les métadonnées Parquet, le parsing des réponses IA et le
 schéma du résultat de benchmark.
+
+## Construire la couche Gold avec dbt
+
+```bash
+make dbt-debug
+make dbt-build
+```
+
+Ces commandes calculent un chemin absolu vers la racine du projet et le passent
+à dbt avec `BI_BENCHMARK_ROOT`. Les emplacements de la base DuckDB et du
+Parquet Silver ne dépendent donc pas du répertoire courant. La variable peut
+également être fournie explicitement pour lancer dbt sans Make.
+
+Chaque mart conserve le grain complet d'une configuration de benchmark :
+`model_name`, `prompt_id`, `generation_temperature` et `generation_seed`.
+Les indicateurs distinguent :
+
+- `overall_accuracy` : bonnes réponses divisées par toutes les tentatives ;
+- `valid_answer_accuracy` : bonnes réponses divisées par les réponses valides ;
+- `valid_answer_rate`, `invalid_answer_rate` et `technical_error_rate` : qualité
+  d'exécution du benchmark.
+
+## Dashboard interactif Streamlit
+
+Installer les dépendances dans l'environnement virtuel, actualiser la Gold,
+puis démarrer l'interface :
+
+```bash
+.venv/bin/python -m pip install -r requirements.txt
+make dbt-build
+make dashboard
+```
+
+Ouvrir [http://localhost:8501](http://localhost:8501). Le serveur écoute uniquement
+en local. `Ctrl+C` dans le terminal permet de l'arrêter. `make dashboard` fonctionne
+sans activer le venv ; depuis un autre répertoire, utiliser
+`make -C /chemin/vers/bi-ai-benchmark dashboard`.
+
+Le dashboard contient quatre vues :
+
+- **Comparatif** : classement, précision / latence, face-à-face question par
+  question et export CSV des indicateurs.
+- **Par thème** : heatmap des catégories et graphiques par difficulté ou type,
+  avec les effectifs au survol.
+- **Exécution** : réponses correctes, incorrectes, invalides et erreurs ; latence
+  moyenne, médiane, P95 et consommation de tokens.
+- **Explorer les réponses** : recherche textuelle, filtre par résultat, tableau
+  sélectionnable, choix proposés, réponse brute et export CSV du périmètre.
+
+Choisir une configuration réelle (prompt, température et seed), puis les modèles.
+Le mode **Questions communes uniquement**, activé par défaut, conserve les
+questions tentées par tous les modèles sélectionnés, y compris leurs erreurs.
+Les filtres catégorie, difficulté et type vides signifient « tout inclure » ;
+une sélection de modèles vide affiche un message.
+
+Les indicateurs sont recalculés depuis les faits filtrés, jamais par une moyenne
+de pourcentages. L'accuracy sur réponses valides est indéfinie sans réponse valide.
+Les moyennes de temps incluent les relances et erreurs ; les moyennes de tokens
+ignorent les valeurs absentes. Un résultat `success` signifie une réponse
+interprétable, pas nécessairement correcte.
+
+Le dashboard lit **`main.fct_benchmark_results`**, une table détaillée matérialisée
+par dbt, avec une connexion DuckDB courte en lecture seule. Les graphiques et les
+exports utilisent le même instantané. Après chaque nouveau benchmark :
+
+```bash
+make dbt-build
+```
+
+Puis cliquer sur **Actualiser les données**. Une alerte signale un Parquet Silver
+plus récent que l'instantané Gold. Le dashboard ne lance pas d'inférence et ne
+reconstruit pas dbt lors des interactions.
+
+Si DuckDB signale un verrou, fermer sa session CLI avec `.exit` (ou attendre la
+fin du build). La table manquante et le schéma ancien sont signalés avec la
+commande à exécuter. `BI_BENCHMARK_DB=/chemin/absolu/base.duckdb` permet de choisir
+une autre base, pour dbt comme pour Streamlit ; `BI_BENCHMARK_ROOT` conserve son
+rôle pour localiser les données Silver.
+
+Les tests du dashboard se lancent avec :
+
+```bash
+.venv/bin/python -m unittest discover -s tests -v
+```
+
+Références : [cache Streamlit](https://docs.streamlit.io/develop/concepts/architecture/caching),
+[tests d'application](https://docs.streamlit.io/develop/api-reference/app-testing/st.testing.v1.apptest).

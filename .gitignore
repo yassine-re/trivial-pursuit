@@ -8,3 +8,12 @@ __pycache__/
 data/bronze/*.checkpoint.json
 data/bronze/*.tmp
 data/silver/*.tmp
+
+# Artefacts locaux dbt et DuckDB
+dbt/target/
+dbt/logs/
+dbt/.user.yml
+dbt/dbt_packages/
+data/**/*.duckdb
+data/**/*.duckdb.wal
+.streamlit/secrets.toml

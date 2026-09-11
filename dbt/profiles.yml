@@ -1,0 +1,11 @@
+trivial_pursuit:
+
+  target: dev
+
+  outputs:
+
+    dev:
+      type: duckdb
+      path: "{{ env_var('BI_BENCHMARK_DB', env_var('BI_BENCHMARK_ROOT', '.') ~ '/data/gold/benchmark.duckdb') }}"
+      schema: main
+      threads: 4

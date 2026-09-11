@@ -1,0 +1,18 @@
+name: "trivial_pursuit"
+version: "1.0.0"
+
+profile: "trivial_pursuit"
+
+model-paths: ["models"]
+
+clean-targets:
+  - "target"
+  - "dbt_packages"
+
+models:
+  trivial_pursuit:
+    staging:
+      +materialized: view
+
+    marts:
+      +materialized: table
